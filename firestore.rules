@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function userDoc() { return get(/databases/$(database)/documents/users/$(request.auth.uid)); }
+    function approved() { return signedIn() && userDoc().data.accountStatus == 'approved'; }
+    function roleIs(role) { return approved() && userDoc().data.role == role; }
+    function isAdmin() { return roleIs('admin'); }
+    function isDgl() { return roleIs('dgl'); }
+    function sameBatch(resourceData) { return approved() && resourceData.batchId == userDoc().data.batchId; }
+    function sameGroup(resourceData) { return approved() && resourceData.groupId == userDoc().data.groupId; }
+
+    match /users/{userId} {
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role == 'participant'
+        && request.resource.data.accountStatus == 'pending'
+        && request.resource.data.requestedRole in ['participant', 'dgl'];
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow update: if isAdmin()
+        || (signedIn() && request.auth.uid == userId
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.requestedRole == resource.data.requestedRole
+          && request.resource.data.accountStatus == resource.data.accountStatus
+          && request.resource.data.batchId == resource.data.batchId
+          && request.resource.data.groupId == resource.data.groupId);
+      allow delete: if isAdmin();
+    }
+
+    match /talks/{talkId} {
+      allow read: if approved();
+      allow write: if isAdmin();
+    }
+
+    match /groups/{groupId} {
+      allow read: if approved() && (isAdmin() || resource.data.batchId == userDoc().data.batchId);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (isDgl() && request.auth.uid in resource.data.dglIds);
+    }
+
+    match /posts/{postId} {
+      allow create: if approved()
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.batchId == userDoc().data.batchId;
+      allow read: if approved() && sameBatch(resource.data) && (
+        resource.data.visibility == 'batch'
+        || (resource.data.visibility == 'group' && sameGroup(resource.data))
+        || (resource.data.visibility == 'dgl' && (resource.data.authorId == request.auth.uid || isAdmin() || isDgl()))
+        || (resource.data.visibility == 'admins' && (resource.data.authorId == request.auth.uid || isAdmin()))
+      );
+      allow update, delete: if approved() && (resource.data.authorId == request.auth.uid || isAdmin());
+    }
+
+    match /comments/{commentId} {
+      allow read: if approved();
+      allow create: if approved() && request.resource.data.authorId == request.auth.uid;
+      allow update, delete: if approved() && (resource.data.authorId == request.auth.uid || isAdmin());
+    }
+
+    match /attendance/{attendanceId} {
+      allow read: if approved() && (isAdmin() || isDgl() || resource.data.userId == request.auth.uid);
+      allow write: if isAdmin() || (isDgl() && request.resource.data.groupId == userDoc().data.groupId);
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
