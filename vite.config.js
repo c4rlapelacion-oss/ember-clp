@@ -4,7 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   // Relative paths let the same build work in any GitHub Pages repository.
-  base: './',
+  base: '/ember-clp/',
   plugins: [
     react(),
     VitePWA({
